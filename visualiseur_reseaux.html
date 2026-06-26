@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NCPA — Visualiseur réseaux (pré-repérage chantiers)</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  :root{
+    --ncpa-rouge:#B91E27;
+    --ncpa-vert:#B1B993;
+    --panel-bg:#ffffff;
+    --txt:#222;
+    --muted:#6b6b6b;
+    --border:#e3e3e3;
+  }
+  html,body{height:100%;margin:0;}
+  #map{position:absolute;inset:0;}
+  body{font-family:Calibri,"Segoe UI",system-ui,sans-serif;color:var(--txt);}
+
+  /* ---- Panneau de contrôle (couches + fonds) ---- */
+  .panel{
+    position:absolute;top:12px;right:12px;z-index:1000;
+    width:260px;max-width:calc(100vw - 24px);
+    background:var(--panel-bg);border:1px solid var(--border);
+    border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.18);
+    overflow:hidden;font-size:14px;
+  }
+  .panel__head{
+    background:var(--ncpa-rouge);color:#fff;
+    padding:9px 12px;font-weight:700;cursor:pointer;
+    display:flex;justify-content:space-between;align-items:center;
+    user-select:none;
+  }
+  .panel__head small{font-weight:400;opacity:.85;}
+  .panel__body{max-height:70vh;overflow:auto;}
+  .panel.collapsed .panel__body{display:none;}
+
+  .section{padding:10px 12px;border-bottom:1px solid var(--border);}
+  .section:last-child{border-bottom:none;}
+  .section__title{
+    font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+    color:var(--muted);margin:0 0 8px;font-weight:700;
+  }
+
+  /* Boutons de fond de carte */
+  .baseswitch{display:flex;gap:6px;}
+  .baseswitch button{
+    flex:1;padding:6px 4px;border:1px solid var(--border);background:#f7f7f7;
+    border-radius:6px;cursor:pointer;font:inherit;font-size:13px;
+  }
+  .baseswitch button.active{background:var(--ncpa-rouge);color:#fff;border-color:var(--ncpa-rouge);}
+
+  /* Lignes de couches */
+  .layer{display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;}
+  .layer input{cursor:pointer;margin:0;flex:0 0 auto;}
+  .swatch{flex:0 0 22px;height:0;border-top-width:4px;border-top-style:solid;border-radius:2px;}
+  .layer__label{flex:1;line-height:1.2;}
+  .layer__count{font-size:11px;color:var(--muted);}
+  .layer__count.err{color:var(--ncpa-rouge);}
+  .grouphint{font-size:11px;color:var(--muted);margin:0 0 6px;font-style:italic;}
+
+  /* ---- Recherche d'adresse ---- */
+  .search{
+    position:absolute;top:12px;left:12px;z-index:1000;
+    width:320px;max-width:calc(100vw - 24px);
+  }
+  .search__bar{display:flex;background:#fff;border:1px solid var(--border);
+    border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.18);overflow:hidden;}
+  .search__bar input{flex:1;border:0;padding:10px 12px;font:inherit;outline:none;}
+  .search__bar button{border:0;background:var(--ncpa-rouge);color:#fff;
+    padding:0 14px;cursor:pointer;font-size:16px;}
+  .search__results{margin-top:4px;background:#fff;border:1px solid var(--border);
+    border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.18);overflow:hidden;display:none;}
+  .search__results.show{display:block;}
+  .search__results div{padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0;}
+  .search__results div:last-child{border-bottom:none;}
+  .search__results div:hover{background:#f6f6f6;}
+  .search__results .empty{color:var(--muted);cursor:default;}
+
+  /* Popups */
+  .pop b{color:var(--ncpa-rouge);}
+  .pop table{border-collapse:collapse;font-size:13px;}
+  .pop td{padding:1px 6px 1px 0;vertical-align:top;}
+  .pop td:first-child{color:var(--muted);white-space:nowrap;}
+  .pop .sensible{color:var(--ncpa-rouge);font-weight:700;}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<!-- Recherche d'adresse -->
+<div class="search">
+  <div class="search__bar">
+    <input id="searchInput" type="text" placeholder="Rechercher une adresse, une commune…" autocomplete="off" />
+    <button id="searchBtn" title="Rechercher">⌕</button>
+  </div>
+  <div id="searchResults" class="search__results"></div>
+</div>
+
+<!-- Panneau couches + fonds -->
+<div class="panel" id="panel">
+  <div class="panel__head" id="panelHead">
+    <span>Couches & fonds</span><small id="panelToggle">▾</small>
+  </div>
+  <div class="panel__body">
+    <div class="section">
+      <div class="section__title">Fond de carte</div>
+      <div class="baseswitch">
+        <button id="baseClair" class="active">Plan clair</button>
+        <button id="baseSat">Satellite</button>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section__title">Électricité — réseaux sensibles</div>
+      <p class="grouphint">Un coulage reste bloqué tant que la DT-DICT n'est pas levée.</p>
+      <div id="groupElec"></div>
+    </div>
+    <div class="section">
+      <div class="section__title">Assainissement</div>
+      <div id="groupAssain"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =======================================================================
+   1) CONFIGURATION DES COUCHES
+   - file   : nom du .geojson (placé DANS LE MÊME DOSSIER que ce HTML)
+   - color  : couleur du tracé
+   - dash   : tirets (ex. réseau aérien) ; null = trait plein
+   - group  : "elec" ou "assain" (où l'afficher dans le panneau)
+   - fields : [libellé, clé de propriété] affichés dans le popup au clic
+   ======================================================================= */
+const LAYERS = [
+  {
+    id:"bt", group:"elec", file:"electricite_bt_souterrain.geojson",
+    label:"BT souterrain (Enedis)", color:"#FF8C00", dash:null,
+    fields:[["Tension","tension"],["Position","position"],["Exploitant","nom_grd"],["Commune","commune"]],
+    sensible:true
+  },
+  {
+    id:"mt", group:"elec", file:"electricite_mt_souterrain.geojson",
+    label:"HTA souterrain (Enedis)", color:"#E63946", dash:null,
+    fields:[["Tension","tension"],["Position","position"],["Exploitant","nom_grd"],["Commune","commune"]],
+    sensible:true
+  },
+  {
+    id:"ht", group:"elec", file:"electricite_ht_aerien.geojson",
+    label:"HTA aérien (Enedis)", color:"#9D4EDD", dash:"6 5",
+    fields:[["Tension","tension"],["Position","position"],["Exploitant","nom_grd"],["Commune","commune"]],
+    sensible:true
+  },
+  {
+    id:"saur", group:"assain", file:"reseau_saur.geojson",
+    label:"Assainissement SAUR", color:"#6A4C2B", dash:null,
+    fields:[["Réseau","RESEAU"],["Écoulement","ECOULEMT"],["Matériau","MATERIAU"],["Ø (mm)","DIAM_BRCT"],["Adresse","ADRESSE"],["Commune","COMMUNE"]],
+    sensible:false
+  },
+  {
+    id:"veolia", group:"assain", file:"reseau_veolia.geojson",
+    label:"Assainissement Veolia", color:"#1B998B", dash:null,
+    fields:[["Type d'eau","type_eau"],["Fonction","fonction"],["Matériau","materiau"],["Rue","rue"],["Commune","commune"]],
+    sensible:false
+  }
+];
+
+/* =======================================================================
+   2) CARTE + FONDS
+   preferCanvas : indispensable pour afficher des milliers de tronçons
+   sans ralentir le navigateur (rendu "canvas" plutôt que SVG).
+   ======================================================================= */
+const map = L.map("map", { preferCanvas:true, zoomControl:true })
+            .setView([49.27, -0.10], 11);          // ~ territoire NCPA
+
+const pixelVide = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+
+const fondClair = L.tileLayer(
+  "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+  { maxZoom:20, attribution:"© OpenStreetMap, © CARTO" }
+);
+const fondSat = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  { maxZoom:20, attribution:"Imagerie © Esri", errorTileUrl:pixelVide }
+);
+
+fondClair.addTo(map);                              // fond par défaut
+L.control.scale({ imperial:false }).addTo(map);
+
+const btnClair = document.getElementById("baseClair");
+const btnSat   = document.getElementById("baseSat");
+function setFond(sat){
+  if(sat){ map.removeLayer(fondClair); fondSat.addTo(map); }
+  else   { map.removeLayer(fondSat);   fondClair.addTo(map); }
+  btnSat.classList.toggle("active", sat);
+  btnClair.classList.toggle("active", !sat);
+}
+btnClair.onclick = ()=>setFond(false);
+btnSat.onclick   = ()=>setFond(true);
+
+/* =======================================================================
+   3) POPUP : construit un petit tableau à partir des champs déclarés
+   ======================================================================= */
+function popupHtml(cfg, props){
+  let rows = cfg.fields.map(([lib,key])=>{
+    let v = props[key];
+    if(v===null || v===undefined || v==="") v = "—";
+    return `<tr><td>${lib}</td><td>${v}</td></tr>`;
+  }).join("");
+  let tag = cfg.sensible
+      ? `<div class="sensible">⚠ Réseau sensible</div>` : "";
+  return `<div class="pop"><b>${cfg.label}</b>${tag}<table>${rows}</table></div>`;
+}
+
+/* =======================================================================
+   4) CHARGEMENT À LA DEMANDE
+   Chaque couche n'est téléchargée qu'au 1er cochage, puis gardée en
+   mémoire (on ne re-télécharge jamais).
+   ======================================================================= */
+const state = {};   // id -> { leaflet:<layer>, loaded:bool, loading:bool, countEl }
+
+function buildRow(cfg){
+  const wrap = document.createElement("label");
+  wrap.className = "layer";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  const sw = document.createElement("span");
+  sw.className = "swatch";
+  sw.style.borderTopColor = cfg.color;
+  if(cfg.dash) sw.style.borderTopStyle = "dashed";
+  const lab = document.createElement("span");
+  lab.className = "layer__label";
+  lab.innerHTML = `${cfg.label}<br><span class="layer__count" id="count-${cfg.id}"></span>`;
+  wrap.append(cb, sw, lab);
+
+  state[cfg.id] = { leaflet:null, loaded:false, loading:false,
+                    countEl:lab.querySelector(".layer__count") };
+
+  cb.addEventListener("change", ()=> toggleLayer(cfg, cb));
+  document.getElementById(cfg.group==="elec" ? "groupElec":"groupAssain").append(wrap);
+}
+
+function toggleLayer(cfg, cb){
+  const s = state[cfg.id];
+  if(cb.checked){
+    if(s.loaded){ s.leaflet.addTo(map); }
+    else if(!s.loading){ loadLayer(cfg, cb); }
+  } else if(s.leaflet){
+    map.removeLayer(s.leaflet);
+  }
+}
+
+function loadLayer(cfg, cb){
+  const s = state[cfg.id];
+  s.loading = true;
+  s.countEl.textContent = "chargement…";
+  fetch(cfg.file)
+    .then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); })
+    .then(geo=>{
+      s.leaflet = L.geoJSON(geo, {
+        style:{ color:cfg.color, weight:3, opacity:.9,
+                dashArray:cfg.dash || null },
+        onEachFeature:(f,lyr)=> lyr.bindPopup(popupHtml(cfg, f.properties||{}))
+      });
+      s.loaded = true; s.loading = false;
+      s.countEl.classList.remove("err");
+      s.countEl.textContent = (geo.features?.length || 0) + " tronçons";
+      if(cb.checked) s.leaflet.addTo(map);   // si toujours coché
+    })
+    .catch(err=>{
+      s.loading = false;
+      s.countEl.classList.add("err");
+      s.countEl.textContent = "fichier introuvable";
+      cb.checked = false;
+      console.error("Couche "+cfg.id+" :", err);
+    });
+}
+
+LAYERS.forEach(buildRow);
+
+/* Replier / déplier le panneau (pratique sur mobile) */
+const panel = document.getElementById("panel");
+document.getElementById("panelHead").addEventListener("click", ()=>{
+  panel.classList.toggle("collapsed");
+  document.getElementById("panelToggle").textContent =
+    panel.classList.contains("collapsed") ? "▸" : "▾";
+});
+
+/* =======================================================================
+   5) RECHERCHE D'ADRESSE (Nominatim / OpenStreetMap)
+   Recherche limitée à la France, centrée sur le secteur NCPA.
+   ======================================================================= */
+const input   = document.getElementById("searchInput");
+const results = document.getElementById("searchResults");
+let searchMarker = null;
+
+function runSearch(){
+  const q = input.value.trim();
+  if(!q){ results.classList.remove("show"); return; }
+  results.innerHTML = `<div class="empty">Recherche…</div>`;
+  results.classList.add("show");
+
+  // viewbox = secteur NCPA (Calvados) pour remonter les bons résultats d'abord
+  const url = "https://nominatim.openstreetmap.org/search?format=json"
+            + "&addressdetails=1&limit=6&countrycodes=fr"
+            + "&viewbox=-0.6,49.5,0.3,49.0"
+            + "&q=" + encodeURIComponent(q);
+
+  fetch(url, { headers:{ "Accept-Language":"fr" } })
+    .then(r=>r.json())
+    .then(list=>{
+      if(!list.length){
+        results.innerHTML = `<div class="empty">Aucun résultat</div>`;
+        return;
+      }
+      results.innerHTML = "";
+      list.forEach(item=>{
+        const d = document.createElement("div");
+        d.textContent = item.display_name;
+        d.onclick = ()=> gotoResult(item);
+        results.append(d);
+      });
+    })
+    .catch(()=>{ results.innerHTML = `<div class="empty">Erreur de recherche</div>`; });
+}
+
+function gotoResult(item){
+  const lat = parseFloat(item.lat), lon = parseFloat(item.lon);
+  map.setView([lat,lon], 18);
+  if(searchMarker) map.removeLayer(searchMarker);
+  searchMarker = L.marker([lat,lon]).addTo(map)
+                  .bindPopup(item.display_name).openPopup();
+  results.classList.remove("show");
+  input.value = item.display_name.split(",")[0];
+}
+
+document.getElementById("searchBtn").onclick = runSearch;
+input.addEventListener("keydown", e=>{ if(e.key==="Enter") runSearch(); });
+// referme la liste si on clique ailleurs
+document.addEventListener("click", e=>{
+  if(!e.target.closest(".search")) results.classList.remove("show");
+});
+</script>
+</body>
+</html>
