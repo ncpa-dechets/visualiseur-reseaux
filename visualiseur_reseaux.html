@@ -9,6 +9,9 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+<!-- SheetJS (export Excel .xlsx) -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
 <style>
   :root{
     --ncpa-rouge:#B91E27;
@@ -88,6 +91,60 @@
   .pop td{padding:1px 6px 1px 0;vertical-align:top;}
   .pop td:first-child{color:var(--muted);white-space:nowrap;}
   .pop .sensible{color:var(--ncpa-rouge);font-weight:700;}
+
+  /* ---- Points de terrain ---- */
+  .point-marker{
+    width:26px;height:26px;border-radius:50%;
+    border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);
+    color:#fff;font-weight:700;font-size:13px;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .ptbtns{display:flex;flex-direction:column;gap:6px;}
+  .ptbtns button{
+    padding:7px 9px;border:1px solid var(--border);background:#f7f7f7;
+    border-radius:6px;cursor:pointer;font:inherit;font-size:13px;text-align:left;
+  }
+  .ptbtns button:hover{background:#efefef;}
+  .ptbtns button.primary{background:var(--ncpa-rouge);color:#fff;border-color:var(--ncpa-rouge);font-weight:700;}
+  .ptbtns button.armed{background:var(--ncpa-vert);color:#222;border-color:var(--ncpa-vert);font-weight:700;}
+  .pt-count{font-size:11px;color:var(--muted);margin-top:8px;}
+
+  /* Bandeau "mode pose" */
+  .place-banner{
+    position:absolute;top:64px;left:50%;transform:translateX(-50%);
+    z-index:1200;background:var(--ncpa-rouge);color:#fff;
+    padding:8px 16px;border-radius:20px;box-shadow:0 2px 12px rgba(0,0,0,.3);
+    font-size:13px;display:none;white-space:nowrap;
+  }
+  .place-banner.show{display:block;}
+
+  /* Modal formulaire d'un point */
+  .modal-bg{
+    position:absolute;inset:0;z-index:2000;background:rgba(0,0,0,.35);
+    display:none;align-items:center;justify-content:center;
+  }
+  .modal-bg.show{display:flex;}
+  .modal{
+    background:#fff;border-radius:10px;width:340px;max-width:calc(100vw - 24px);
+    box-shadow:0 6px 30px rgba(0,0,0,.35);overflow:hidden;
+  }
+  .modal__head{background:var(--ncpa-rouge);color:#fff;padding:10px 14px;font-weight:700;}
+  .modal__body{padding:14px;display:flex;flex-direction:column;gap:10px;}
+  .modal__body label{font-size:12px;color:var(--muted);font-weight:700;display:block;margin-bottom:3px;}
+  .modal__body select,.modal__body input,.modal__body textarea{
+    width:100%;box-sizing:border-box;padding:7px 8px;border:1px solid var(--border);
+    border-radius:6px;font:inherit;font-size:14px;
+  }
+  .modal__body textarea{resize:vertical;min-height:48px;}
+  .modal__coords{font-size:11px;color:var(--muted);}
+  .modal__foot{display:flex;gap:8px;padding:0 14px 14px;}
+  .modal__foot button{flex:1;padding:9px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font:inherit;font-size:14px;}
+  .modal__foot .save{background:var(--ncpa-rouge);color:#fff;border-color:var(--ncpa-rouge);font-weight:700;}
+
+  /* Boutons dans le popup d'un point */
+  .pop .popbtns{margin-top:8px;display:flex;gap:6px;}
+  .pop .popbtns button{padding:4px 8px;border:1px solid var(--border);background:#f7f7f7;border-radius:5px;cursor:pointer;font:inherit;font-size:12px;}
+  .pop .popbtns button.del{color:var(--ncpa-rouge);}
 </style>
 </head>
 <body>
@@ -123,6 +180,56 @@
     <div class="section">
       <div class="section__title">Assainissement</div>
       <div id="groupAssain"></div>
+    </div>
+    <div class="section">
+      <div class="section__title">Points de terrain</div>
+      <div class="ptbtns">
+        <button id="btnPlace" class="primary">➕ Placer un point</button>
+        <button id="btnExportXlsx">⤓ Export Excel (.xlsx)</button>
+        <button id="btnExportJson">💾 Sauvegarde (.json)</button>
+        <button id="btnImportJson">📂 Importer (.json)</button>
+      </div>
+      <div class="pt-count" id="ptCount">0 point</div>
+      <input type="file" id="fileImport" accept=".json,application/json" style="display:none" />
+    </div>
+  </div>
+</div>
+
+<!-- Bandeau affiché en mode "pose d'un point" -->
+<div class="place-banner" id="placeBanner">Cliquez sur la carte pour poser le point — <b>Échap</b> pour annuler</div>
+
+<!-- Formulaire d'un point (création / édition) -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <div class="modal__head" id="modalTitle">Nouveau point</div>
+    <div class="modal__body">
+      <div>
+        <label for="fType">Type</label>
+        <select id="fType">
+          <option value="point_regroupement">Point de regroupement</option>
+          <option value="cabane_cartons">Cabane à cartons</option>
+          <option value="colonne_verre">Colonne enterrée — Verre</option>
+          <option value="colonne_emballages">Colonne enterrée — Emballages et papiers</option>
+          <option value="colonne_omr">Colonne enterrée — OMr</option>
+        </select>
+      </div>
+      <div>
+        <label for="fRepere">Repère / nom</label>
+        <input id="fRepere" type="text" placeholder="ex. Place de l'église" />
+      </div>
+      <div>
+        <label for="fAdresse">Adresse</label>
+        <input id="fAdresse" type="text" placeholder="adresse" />
+      </div>
+      <div>
+        <label for="fComment">Commentaire</label>
+        <textarea id="fComment" placeholder="observations éventuelles…"></textarea>
+      </div>
+      <div class="modal__coords" id="fCoords"></div>
+    </div>
+    <div class="modal__foot">
+      <button class="cancel" id="btnCancel">Annuler</button>
+      <button class="save" id="btnSave">Enregistrer</button>
     </div>
   </div>
 </div>
@@ -344,6 +451,272 @@ input.addEventListener("keydown", e=>{ if(e.key==="Enter") runSearch(); });
 document.addEventListener("click", e=>{
   if(!e.target.closest(".search")) results.classList.remove("show");
 });
+
+/* =======================================================================
+   6) POINTS DE TERRAIN
+   Pose au clic, édition/suppression, déplacement par glisser,
+   auto-sauvegarde (localStorage) et export Excel / JSON.
+   ======================================================================= */
+const POINT_TYPES = {
+  point_regroupement: { label:"Point de regroupement", flux:"",                       color:"#1E6FD9", letter:"R" },
+  cabane_cartons:     { label:"Cabane à cartons",       flux:"",                       color:"#8B5A2B", letter:"C" },
+  colonne_verre:      { label:"Colonne enterrée",       flux:"Verre",                  color:"#2E9B57", letter:"V" },
+  colonne_emballages: { label:"Colonne enterrée",       flux:"Emballages et papiers",  color:"#E8B500", letter:"E" },
+  colonne_omr:        { label:"Colonne enterrée",       flux:"OMr",                    color:"#444444", letter:"O" }
+};
+
+const STORE_KEY   = "ncpa_points_v1";
+const pointsLayer = L.featureGroup().addTo(map);
+let   points      = [];      // données des points
+const markers     = {};      // id -> marqueur Leaflet
+let   placing     = false;   // mode pose actif ?
+let   editingId   = null;    // id en cours d'édition (null = création)
+let   pendingLL   = null;    // position du point en cours
+let   geocodeSeq  = 0;       // anti-collision pour le reverse-geocoding
+
+const elBanner = document.getElementById("placeBanner");
+const elModal  = document.getElementById("modalBg");
+const elCount  = document.getElementById("ptCount");
+const fType    = document.getElementById("fType");
+const fRepere  = document.getElementById("fRepere");
+const fAdresse = document.getElementById("fAdresse");
+const fComment = document.getElementById("fComment");
+const fCoords  = document.getElementById("fCoords");
+const btnPlace = document.getElementById("btnPlace");
+
+function esc(s){
+  return String(s==null?"":s).replace(/[&<>"]/g,
+    c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
+}
+function stamp(){
+  const d=new Date(), p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"_"+p(d.getHours())+"h"+p(d.getMinutes());
+}
+
+function makeIcon(typeId){
+  const t = POINT_TYPES[typeId];
+  return L.divIcon({
+    className:"",
+    html:`<div class="point-marker" style="background:${t.color}">${t.letter}</div>`,
+    iconSize:[26,26], iconAnchor:[13,13], popupAnchor:[0,-15]
+  });
+}
+
+function pointPopupHtml(p){
+  const t = POINT_TYPES[p.typeId];
+  const title = esc(t.label) + (t.flux ? " — " + esc(t.flux) : "");
+  const rows = [
+    ["Repère", p.repere],
+    ["Adresse", p.adresse],
+    ["Commentaire", p.commentaire],
+    ["GPS", p.lat.toFixed(6) + ", " + p.lng.toFixed(6)]
+  ].filter(([,v])=>v)
+   .map(([k,v])=>`<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join("");
+  return `<div class="pop"><b>${title}</b><table>${rows}</table>`
+       + `<div class="popbtns">`
+       + `<button onclick="window.editPoint('${p.id}')">✎ Éditer</button>`
+       + `<button class="del" onclick="window.deletePoint('${p.id}')">🗑 Supprimer</button>`
+       + `</div></div>`;
+}
+
+function addMarker(p){
+  const m = L.marker([p.lat, p.lng], { icon:makeIcon(p.typeId), draggable:true });
+  m.bindPopup(pointPopupHtml(p));
+  m.on("dragend", ()=>{
+    const ll = m.getLatLng();
+    p.lat = ll.lat; p.lng = ll.lng;
+    m.setPopupContent(pointPopupHtml(p));
+    save();
+  });
+  m.addTo(pointsLayer);
+  markers[p.id] = m;
+}
+function refreshMarker(p){
+  const m = markers[p.id];
+  if(!m) return;
+  m.setIcon(makeIcon(p.typeId));
+  m.setLatLng([p.lat, p.lng]);
+  m.setPopupContent(pointPopupHtml(p));
+}
+function updateCount(){
+  elCount.textContent = points.length + (points.length>1 ? " points" : " point");
+}
+function save(){
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(points)); }catch(e){}
+}
+function loadStored(){
+  let arr=[];
+  try{ arr = JSON.parse(localStorage.getItem(STORE_KEY)) || []; }catch(e){ arr=[]; }
+  points = Array.isArray(arr) ? arr : [];
+  points.forEach(addMarker);
+  updateCount();
+}
+
+/* --- Mode pose --- */
+function setPlacing(on){
+  placing = on;
+  btnPlace.classList.toggle("armed", on);
+  btnPlace.textContent = on ? "✕ Annuler la pose" : "➕ Placer un point";
+  elBanner.classList.toggle("show", on);
+  map.getContainer().style.cursor = on ? "crosshair" : "";
+}
+btnPlace.onclick = ()=> setPlacing(!placing);
+
+map.on("click", (e)=>{
+  if(!placing) return;
+  setPlacing(false);
+  openForm(null, e.latlng);
+});
+
+/* --- Reverse-geocoding (adresse à partir des coordonnées) --- */
+function reverseGeocode(lat, lng){
+  const url = "https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&addressdetails=0"
+            + "&lat=" + lat + "&lon=" + lng;
+  return fetch(url, { headers:{ "Accept-Language":"fr" } })
+    .then(r=>r.json()).then(d=> d.display_name || "").catch(()=> "");
+}
+
+/* --- Formulaire --- */
+function openForm(id, latlng){
+  editingId = id;
+  if(id){
+    const p = points.find(x=>x.id===id);
+    pendingLL = { lat:p.lat, lng:p.lng };
+    fType.value    = p.typeId;
+    fRepere.value  = p.repere || "";
+    fAdresse.value = p.adresse || "";
+    fComment.value = p.commentaire || "";
+    document.getElementById("modalTitle").textContent = "Modifier le point";
+  } else {
+    pendingLL = { lat:latlng.lat, lng:latlng.lng };
+    fType.value = "point_regroupement";
+    fRepere.value = "";
+    fAdresse.value = "";
+    fComment.value = "";
+    document.getElementById("modalTitle").textContent = "Nouveau point";
+    // recherche automatique de l'adresse
+    fAdresse.placeholder = "recherche de l'adresse…";
+    const token = ++geocodeSeq;
+    reverseGeocode(latlng.lat, latlng.lng).then(addr=>{
+      if(token !== geocodeSeq) return;      // une autre pose a démarré entre-temps
+      if(fAdresse.value === "") fAdresse.value = addr;
+      fAdresse.placeholder = "adresse";
+    });
+  }
+  fCoords.textContent = "GPS : " + pendingLL.lat.toFixed(6) + ", " + pendingLL.lng.toFixed(6);
+  elModal.classList.add("show");
+}
+function closeForm(){
+  geocodeSeq++;                 // invalide un reverse-geocoding en cours
+  elModal.classList.remove("show");
+  editingId = null;
+  pendingLL = null;
+}
+
+document.getElementById("btnSave").onclick = ()=>{
+  const typeId = fType.value;
+  if(editingId){
+    const p = points.find(x=>x.id===editingId);
+    p.typeId      = typeId;
+    p.repere      = fRepere.value.trim();
+    p.adresse     = fAdresse.value.trim();
+    p.commentaire = fComment.value.trim();
+    refreshMarker(p);
+  } else {
+    const p = {
+      id: "p" + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      typeId,
+      repere:      fRepere.value.trim(),
+      adresse:     fAdresse.value.trim(),
+      commentaire: fComment.value.trim(),
+      lat: pendingLL.lat,
+      lng: pendingLL.lng,
+      date: new Date().toLocaleString("fr-FR",
+            { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" })
+    };
+    points.push(p);
+    addMarker(p);
+  }
+  save(); updateCount(); closeForm();
+};
+document.getElementById("btnCancel").onclick = closeForm;
+elModal.addEventListener("click", e=>{ if(e.target===elModal) closeForm(); });
+
+window.editPoint = function(id){
+  const m = markers[id]; if(m) m.closePopup();
+  openForm(id, null);
+};
+window.deletePoint = function(id){
+  if(!confirm("Supprimer ce point ?")) return;
+  const m = markers[id];
+  if(m){ pointsLayer.removeLayer(m); delete markers[id]; }
+  points = points.filter(x=>x.id!==id);
+  save(); updateCount();
+};
+
+/* Échap : annule la pose ou ferme le formulaire */
+document.addEventListener("keydown", (e)=>{
+  if(e.key!=="Escape") return;
+  if(placing) setPlacing(false);
+  if(elModal.classList.contains("show")) closeForm();
+});
+
+/* --- Export Excel (.xlsx) --- */
+document.getElementById("btnExportXlsx").onclick = ()=>{
+  if(!points.length){ alert("Aucun point à exporter."); return; }
+  const rows = points.map((p,i)=>{
+    const t = POINT_TYPES[p.typeId];
+    return {
+      "N°": i+1,
+      "Type": t.label,
+      "Flux": t.flux,
+      "Repère": p.repere || "",
+      "Adresse": p.adresse || "",
+      "Commentaire": p.commentaire || "",
+      "Latitude": p.lat,
+      "Longitude": p.lng,
+      "Date de pose": p.date || ""
+    };
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws["!cols"] = [{wch:5},{wch:22},{wch:22},{wch:20},{wch:42},{wch:32},{wch:12},{wch:12},{wch:18}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Points");
+  XLSX.writeFile(wb, "points_terrain_" + stamp() + ".xlsx");
+};
+
+/* --- Sauvegarde / import (.json) --- */
+document.getElementById("btnExportJson").onclick = ()=>{
+  const blob = new Blob([JSON.stringify(points,null,2)], { type:"application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "points_terrain_" + stamp() + ".json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+const fileImport = document.getElementById("fileImport");
+document.getElementById("btnImportJson").onclick = ()=> fileImport.click();
+fileImport.onchange = ()=>{
+  const f = fileImport.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    let arr;
+    try{ arr = JSON.parse(reader.result); }catch(e){ alert("Fichier illisible."); return; }
+    if(!Array.isArray(arr)){ alert("Format de fichier inattendu."); return; }
+    if(points.length && !confirm("Remplacer les " + points.length + " point(s) actuels par le contenu du fichier ?")) return;
+    pointsLayer.clearLayers();
+    for(const k in markers) delete markers[k];
+    points = arr;
+    points.forEach(addMarker);
+    save(); updateCount();
+    if(points.length){ map.fitBounds(pointsLayer.getBounds().pad(0.2)); }
+  };
+  reader.readAsText(f);
+  fileImport.value = "";
+};
+
+/* Restaure les points enregistrés au chargement */
+loadStored();
 </script>
 </body>
 </html>
