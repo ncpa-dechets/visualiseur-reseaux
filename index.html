@@ -182,6 +182,11 @@
       <div id="groupAssain"></div>
     </div>
     <div class="section">
+      <div class="section__title">Gaz — réseaux sensibles</div>
+      <p class="grouphint">Un coulage reste bloqué tant que la DT-DICT n'est pas levée.</p>
+      <div id="groupGaz"></div>
+    </div>
+    <div class="section">
       <div class="section__title">Points de terrain</div>
       <div class="ptbtns">
         <button id="btnPlace" class="primary">➕ Placer un point</button>
@@ -273,6 +278,18 @@ const LAYERS = [
     label:"Assainissement Veolia", color:"#1B998B", dash:null,
     fields:[["Type d'eau","type_eau"],["Fonction","fonction"],["Matériau","materiau"],["Rue","rue"],["Commune","commune"]],
     sensible:false
+  },
+  {
+    id:"gaz_transport", group:"gaz", file:"reseau_transport_gaz_ncpa.geojson",
+    label:"Transport de gaz (GRTgaz)", color:"#0072CE", dash:null,
+    fields:[["Transporteur","transporte"],["Région","nom_region"],["Département","departemen"]],
+    sensible:true
+  },
+  {
+    id:"gaz_distribution", group:"gaz", file:"reseau_distribution_gaz_ncpa.geojson",
+    label:"Distribution de gaz (GRDF)", color:"#FFC72C", dash:null,
+    fields:[["Niveau de pression","niveau_de_"],["Exploitant","nom_grd"],["Commune","commune"],["Mise à jour","date_maj"]],
+    sensible:true
   }
 ];
 
@@ -350,7 +367,8 @@ function buildRow(cfg){
                     countEl:lab.querySelector(".layer__count") };
 
   cb.addEventListener("change", ()=> toggleLayer(cfg, cb));
-  document.getElementById(cfg.group==="elec" ? "groupElec":"groupAssain").append(wrap);
+  const groupEl = { elec:"groupElec", assain:"groupAssain", gaz:"groupGaz" }[cfg.group];
+  document.getElementById(groupEl).append(wrap);
 }
 
 function toggleLayer(cfg, cb){
